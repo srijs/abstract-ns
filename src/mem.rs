@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 
-use futures::{BoxFuture, IntoFuture, Future};
+use futures::{IntoFuture, Future};
+use futures::future::FutureResult;
 
+use stream_once::StreamOnce;
 use {Name, Address, Resolver, Error, parse_name};
 
 /// A stub resolver that resolves names from in-memory hash table
@@ -37,7 +39,9 @@ impl MemResolver {
 }
 
 impl Resolver for MemResolver {
-    fn resolve(&self, name: Name) -> BoxFuture<Address, Error> {
+    type Future = FutureResult<Address, Error>;
+    type Stream = StreamOnce<FutureResult<Address, Error>>;
+    fn resolve(&self, name: Name) -> FutureResult<Address, Error> {
         match parse_name(name) {
             Some((_, None)) => {
                 Err(Error::InvalidName(name.to_string(),
@@ -54,6 +58,11 @@ impl Resolver for MemResolver {
                 Err(Error::InvalidName(name.to_string(),
                     "default port can't be parsed"))
             }
-        }.into_future().boxed()
+        }.into_future()
+    }
+    fn subscribe(&self, name: Name)
+        -> StreamOnce<FutureResult<Address, Error>>
+    {
+        StreamOnce::new(self.resolve(name))
     }
 }

@@ -22,11 +22,15 @@ pub struct RouterBuilder(Inner);
 #[derive(Clone)]
 pub struct Router(Arc<Inner>);
 
+type NameFuture = Box<Future<Item=Address, Error=Error> + Send>;
+type NameStream = Box<Stream<Item=Address, Error=Error> + Send>;
+type BoxResolver = Box<Resolver<Future=NameFuture, Stream=NameStream> +
+                       Send + Sync>;
 
 struct Inner {
     names: MemResolver,
-    suffixes: HashMap<String, Box<Resolver>>,
-    fallback: Option<Box<Resolver>>,
+    suffixes: HashMap<String, BoxResolver>,
+    fallback: Option<BoxResolver>,
 }
 
 impl RouterBuilder {
@@ -53,7 +57,7 @@ impl RouterBuilder {
     ///
     /// If overlapping suffixes are specified, longest matching suffix wins.
     pub fn add_suffix<S, R>(&mut self, suffix: S, resolver: R) -> &mut Self
-        where S: Into<String>, R: Resolver + 'static,
+        where S: Into<String>, R: Resolver + Send + Sync + 'static,
     {
         self.0.suffixes.insert(suffix.into(), Box::new(resolver));
         self
@@ -66,7 +70,7 @@ impl RouterBuilder {
     /// Note: when suffix matches but returns non existent domain name
     /// the default resolver is *not* called.
     pub fn add_default<R>(&mut self, resolver: R) -> &mut Self
-        where R: Resolver + 'static,
+        where R: Resolver + Send + Sync + 'static,
     {
         self.0.fallback = Some(Box::new(resolver));
         self
@@ -78,7 +82,9 @@ impl RouterBuilder {
 }
 
 impl Resolver for Router {
-    fn resolve(&self, name: Name) -> BoxFuture<Address, Error> {
+    type Future = NameFuture;
+    type Stream = NameStream;
+    fn resolve(&self, name: Name) -> NameFuture {
         if let Some((host, _)) = parse_name(name) {
             if self.0.names.contains_name(host) {
                 return self.0.names.resolve(name);
@@ -99,7 +105,7 @@ impl Resolver for Router {
         }
         failed(Error::NameNotFound).boxed()
     }
-    fn subscribe(&self, name: Name) -> BoxStream<Address, Error> {
+    fn subscribe(&self, name: Name) -> NameStream {
         if let Some((host, _)) = parse_name(name) {
             if self.0.names.contains_name(host) {
                 return self.0.names.subscribe(name);
